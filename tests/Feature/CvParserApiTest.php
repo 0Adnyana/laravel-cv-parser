@@ -1,7 +1,36 @@
 <?php
 
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Testing\TestResponse;
+
+function postParse(array $data = [], array $headers = []): TestResponse
+{
+    return test()
+        ->withSession(['_token' => 'test-token'])
+        ->postJson('/api/v1/parse', $data, array_merge([
+            'X-XSRF-TOKEN' => 'test-token',
+        ], $headers));
+}
+
+function enforceCsrfInTests(): void
+{
+    app()->bind(PreventRequestForgery::class, function ($app) {
+        return new class($app, $app['encrypter']) extends PreventRequestForgery
+        {
+            protected function runningUnitTests(): bool
+            {
+                return false;
+            }
+        };
+    });
+}
+
+function postParseWithoutCsrf(array $data = []): TestResponse
+{
+    return test()->postJson('/api/v1/parse', $data);
+}
 
 function fakeOpenRouterModelsApi(bool $supportsFile = true, string $model = 'anthropic/claude-3.5-sonnet'): void
 {
@@ -150,7 +179,7 @@ test('successful parse returns grouped json under data', function () {
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $response = $this->postJson('/api/v1/parse', ['cv' => $file]);
+    $response = postParse(['cv' => $file]);
 
     $response->assertSuccessful()
         ->assertJsonStructure([
@@ -196,7 +225,7 @@ test('missing openrouter api key returns 503 without outbound call', function ()
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
+    postParse(['cv' => $file])
         ->assertStatus(503)
         ->assertJsonFragment([
             'message' => 'CV parsing is unavailable until OPENROUTER_API_KEY is set.',
@@ -211,7 +240,7 @@ test('missing openrouter model returns 503 without outbound call', function () {
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
+    postParse(['cv' => $file])
         ->assertStatus(503)
         ->assertJsonFragment([
             'message' => 'CV parsing is unavailable until OPENROUTER_MODEL is set.',
@@ -225,20 +254,23 @@ test('invalid file type returns 422', function () {
 
     $file = UploadedFile::fake()->create('resume.png', 100, 'image/png');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
+    postParse(['cv' => $file])
         ->assertUnprocessable()
         ->assertJsonValidationErrors(['cv']);
 
     Http::assertNothingSent();
 });
 
-test('parse does not require authentication', function () {
-    fakeOpenRouterCvResponse(sampleCvData());
+test('parse requires csrf token', function () {
+    enforceCsrfInTests();
+    Http::fake();
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
-        ->assertSuccessful();
+    postParseWithoutCsrf(['cv' => $file])
+        ->assertStatus(419);
+
+    Http::assertNothingSent();
 });
 
 test('text-only model uses cloudflare-ai extraction and text-only structuring', function () {
@@ -270,7 +302,7 @@ test('text-only model uses cloudflare-ai extraction and text-only structuring', 
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
+    postParse(['cv' => $file])
         ->assertSuccessful()
         ->assertJsonPath('data.personal_info.first_name', 'Jane');
 
@@ -342,7 +374,7 @@ test('multimodal pdf parse error triggers text extraction fallback', function ()
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
+    postParse(['cv' => $file])
         ->assertSuccessful()
         ->assertJsonPath('data.personal_info.first_name', 'Jane');
 
@@ -380,7 +412,7 @@ test('multimodal pdf parse error with failed fallback returns 422', function () 
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
+    postParse(['cv' => $file])
         ->assertUnprocessable()
         ->assertJson([
             'message' => 'The provider is temporarily unavailable. Try again shortly.',
@@ -413,7 +445,7 @@ test('non-pdf openrouter error does not trigger text extraction fallback', funct
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
+    postParse(['cv' => $file])
         ->assertUnprocessable()
         ->assertJson([
             'message' => 'The provider is rate limiting requests. Wait and try again, or switch to a different model.',
@@ -448,7 +480,7 @@ test('provider returned error surfaces provider rate limit message', function ()
 
     $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
 
-    $this->postJson('/api/v1/parse', ['cv' => $file])
+    postParse(['cv' => $file])
         ->assertUnprocessable()
         ->assertJson([
             'message' => 'The provider is rate limiting requests. Wait and try again, or switch to a different model.',

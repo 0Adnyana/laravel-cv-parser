@@ -55,15 +55,6 @@ Fortify authentication routes MAY exist in the codebase but MUST NOT gate the de
 - **WHEN** a visitor uses the demo page
 - **THEN** the system does not evaluate user roles or permissions
 
-### Requirement: Parser API routes are public
-
-Routes under `/api/v1/*` MUST NOT require session authentication or Bearer tokens for the demo.
-
-#### Scenario: Parse without Authorization header
-
-- **WHEN** a client POSTs a valid PDF to `/api/v1/parse` without an `Authorization` header
-- **THEN** the request is processed normally when OpenRouter is configured
-
 ### Requirement: Same-origin demo architecture
 
 The demo UI MUST call parser API routes on the same application origin (no cross-origin requests in v1).
@@ -84,4 +75,35 @@ The demo MUST NOT persist uploaded PDFs or parse results to disk or database as 
 - **WHEN** a parse request completes
 - **THEN** no uploaded file remains on disk from that request
 - **THEN** no database records are created
+
+### Requirement: Parser routes are CSRF-protected web routes
+
+Parser status and parse routes MUST be registered in the web route stack (session + CSRF middleware), not in the stateless API route file.
+
+Routes MUST remain at:
+
+- `GET /api/v1/status`
+- `POST /api/v1/parse`
+
+Parser routes MUST NOT require user authentication (login) for the demo.
+
+`POST /api/v1/parse` MUST require a valid CSRF token and MUST reject requests without one with HTTP 419.
+
+`GET /api/v1/status` MUST NOT require CSRF (read-only).
+
+#### Scenario: Parse without CSRF token is rejected
+
+- **WHEN** a client POSTs a valid PDF to `/api/v1/parse` without a CSRF token or session cookie
+- **THEN** the system returns HTTP 419
+- **THEN** OpenRouter is not called
+
+#### Scenario: Parse with valid CSRF token succeeds
+
+- **WHEN** a client POSTs a valid PDF to `/api/v1/parse` with a valid session cookie and CSRF token
+- **THEN** the request is processed normally when OpenRouter is configured
+
+#### Scenario: Status remains accessible without CSRF
+
+- **WHEN** a client GETs `/api/v1/status` without a CSRF token
+- **THEN** the system returns HTTP 200 with availability JSON
 

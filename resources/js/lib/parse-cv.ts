@@ -1,3 +1,4 @@
+import { getCsrfToken } from '@/lib/csrf';
 import type {
     ParseCvErrorResponse,
     ParseCvResponse,
@@ -33,6 +34,7 @@ export async function parseCv(file: File): Promise<ParseCvResponse> {
         method: 'POST',
         headers: {
             Accept: 'application/json',
+            'X-XSRF-TOKEN': getCsrfToken(),
         },
         body: formData,
     });

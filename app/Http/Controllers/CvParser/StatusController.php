@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api\V1;
+namespace App\Http\Controllers\CvParser;
 
 use App\Http\Controllers\Controller;
 use App\Services\CvParser\Configuration\CvParserConfiguration;

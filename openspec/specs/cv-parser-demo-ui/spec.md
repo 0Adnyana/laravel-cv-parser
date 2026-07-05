@@ -55,15 +55,23 @@ The demo page MUST submit the selected PDF using `fetch` to `POST /api/v1/parse`
 
 - `Content-Type`: omitted (browser sets multipart boundary)
 - `Accept: application/json`
+- `X-XSRF-TOKEN`: decoded value from the `XSRF-TOKEN` cookie set by Laravel
 - Body: `FormData` with field name `cv`
 
 The client MUST NOT set a manual multipart `Content-Type` header.
+
+The client MUST send the CSRF token on every parse POST so the web middleware accepts the request.
 
 #### Scenario: Successful parse displays result
 
 - **WHEN** the user selects a valid PDF and submits
 - **AND** the API returns HTTP 200
 - **THEN** the demo page displays the parsed JSON from `response.data`
+
+#### Scenario: CSRF token included on parse POST
+
+- **WHEN** the demo page submits a PDF for parsing
+- **THEN** the outbound `fetch` request includes an `X-XSRF-TOKEN` header derived from the session cookie
 
 ### Requirement: Loading and error UX states
 

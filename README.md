@@ -1,14 +1,13 @@
 # Laravel CV Parser
 
-Upload a CV/resume PDF and get structured JSON back — personal info, work experience, education, skills, and links. The app includes a browser demo, a REST API, and optional user accounts (register, login, dashboard).
+Upload a CV/resume PDF and get structured JSON back — personal info, work experience, education, skills, and links. The app includes a browser demo and optional user accounts (register, login, dashboard).
 
 Parsing is powered by [OpenRouter](https://openrouter.ai/) (you bring your own API key and model).
 
 ## Features
 
 - **Web demo** at `/demo` — upload a PDF and view parsed results in the browser
-- **REST API** at `/api/v1/parse` — integrate CV parsing into your own tools
-- **Status endpoint** at `/api/v1/status` — check whether parsing is configured
+- **Parser endpoints** at `/api/v1/status` and `/api/v1/parse` — same-origin only (session + CSRF required for parse)
 - **Authentication** — Fortify-based register/login, email verification, profile and security settings
 - **Self-hostable** — single Docker container, external database, no bundled DB
 
@@ -26,11 +25,18 @@ Parsing is powered by [OpenRouter](https://openrouter.ai/) (you bring your own A
    - **Experience & education** — jobs and schools
    - **Skills & portfolio** — skills, portfolio URL, LinkedIn URL
 
-### API
+### Parser endpoints (same-origin only)
 
-Base path: `/api/v1`
+The parser endpoints live at `/api/v1/*` but are **not a public REST API**. They are registered on the web middleware stack and intended for use from the in-app demo UI on the same origin.
+
+- **GET `/api/v1/status`** — check whether parsing is configured (no CSRF required)
+- **POST `/api/v1/parse`** — upload and parse a PDF (requires a Laravel session cookie and valid CSRF token)
+
+External clients (curl, Postman, third-party integrations) cannot call `POST /api/v1/parse` without first obtaining a session and CSRF token from the application. Requests without a valid CSRF token receive HTTP **419**.
 
 #### Check availability
+
+From the same origin (e.g. after loading `/demo` in a browser), or for read-only status checks:
 
 ```bash
 curl https://your-domain.com/api/v1/status
@@ -49,12 +55,7 @@ If `OPENROUTER_API_KEY` or `OPENROUTER_MODEL` is missing, `available` is `false`
 
 #### Parse a CV
 
-```bash
-curl -X POST https://your-domain.com/api/v1/parse \
-  -F "cv=@/path/to/resume.pdf"
-```
-
-Success (`200`):
+Parsing is only supported from the demo UI, which automatically sends the required CSRF token. The response shape for successful parses:
 
 ```json
 {

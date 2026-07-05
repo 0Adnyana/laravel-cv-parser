@@ -22,7 +22,7 @@ The service MUST expose `GET /api/v1/status` returning JSON:
 - Missing model: `"CV parsing is unavailable until OPENROUTER_MODEL is set."`
 - Invalid PDF engine: message describing allowed values
 
-The status endpoint MUST NOT require authentication.
+The status endpoint MUST be registered as a web route. It MUST NOT require user authentication or CSRF (GET is exempt).
 
 #### Scenario: Fully configured status
 
@@ -77,24 +77,30 @@ Validation rules:
 
 Invalid uploads MUST return HTTP 422 with JSON body `{ "message": "The given data was invalid.", "errors": { "cv": ["..."] } }` and MUST NOT call OpenRouter.
 
-The parse endpoint MUST NOT require authentication.
+The parse endpoint MUST be registered as a web route. It MUST NOT require user authentication but MUST require a valid CSRF token. Requests without a valid CSRF token MUST return HTTP 419.
 
 #### Scenario: Rejects non-PDF file
 
-- **WHEN** a client uploads a `.png` file as `cv`
+- **WHEN** a client uploads a `.png` file as `cv` with a valid CSRF token
 - **THEN** the system returns HTTP 422 with validation errors for `cv`
 - **THEN** OpenRouter is not called
 
 #### Scenario: Rejects oversized PDF
 
-- **WHEN** a client uploads a PDF larger than 5 MB
+- **WHEN** a client uploads a PDF larger than 5 MB with a valid CSRF token
 - **THEN** the system returns HTTP 422 with validation errors for `cv`
 - **THEN** OpenRouter is not called
 
 #### Scenario: Rejects missing file
 
-- **WHEN** a client POSTs without a `cv` field
+- **WHEN** a client POSTs without a `cv` field but with a valid CSRF token
 - **THEN** the system returns HTTP 422 with validation errors for `cv`
+
+#### Scenario: Rejects missing CSRF token
+
+- **WHEN** a client POSTs a valid PDF without a CSRF token
+- **THEN** the system returns HTTP 419
+- **THEN** OpenRouter is not called
 
 ### Requirement: OpenRouter model capability detection
 
@@ -334,6 +340,9 @@ Tests MUST cover at minimum:
 - Text-only model routes to text-extraction path (models API returns no `file` modality)
 - PDF-parse error on multimodal path triggers text-extraction fallback and succeeds
 - PDF-parse error fallback failure returns HTTP 422
+- Parse without CSRF token returns HTTP 419
+
+Tests that POST to `/api/v1/parse` MUST include a valid CSRF token (e.g. via `$this->withSession([...])` and `X-XSRF-TOKEN` header, or Laravel's test helpers).
 
 #### Scenario: CI test fakes OpenRouter
 
@@ -352,4 +361,10 @@ Tests MUST cover at minimum:
 - **WHEN** a test fakes a multimodal failure with `unable to parse pdf` in the error body
 - **THEN** the test asserts a subsequent text-extraction path call
 - **THEN** the test asserts HTTP 200 on successful fallback
+
+#### Scenario: Missing CSRF returns 419
+
+- **WHEN** a test POSTs a valid PDF to `/api/v1/parse` without a CSRF token
+- **THEN** the test asserts HTTP 419
+- **THEN** no outbound OpenRouter request is made
 
