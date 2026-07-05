@@ -64,5 +64,4 @@ export type ParseCvErrorResponse = {
     errors?: {
         cv?: string[];
     };
-    raw_content?: string;
 };

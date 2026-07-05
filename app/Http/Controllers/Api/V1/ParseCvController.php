@@ -22,13 +22,9 @@ class ParseCvController extends Controller
                 'message' => $exception->getMessage(),
             ], 503);
         } catch (CvParserExtractionException $exception) {
-            $payload = ['message' => $exception->getMessage()];
-
-            if ($exception->rawContent !== null) {
-                $payload['raw_content'] = $exception->rawContent;
-            }
-
-            return response()->json($payload, 422);
+            return response()->json([
+                'message' => $exception->getMessage(),
+            ], 422);
         }
     }
 }

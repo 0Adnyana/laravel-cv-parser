@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { fetchParserStatus, parseCv } from '@/lib/parse-cv';
+import { ParseCvRequestError, fetchParserStatus, parseCv } from '@/lib/parse-cv';
 import type { ParseCvData } from '@/types/cv-parser';
 
 export type UiState = 'idle' | 'processing' | 'success' | 'error';
@@ -173,7 +173,7 @@ export const useDemoStore = create<DemoState>((set, get) => ({
             set({
                 uiState: 'error',
                 errorMessage:
-                    error instanceof Error
+                    error instanceof ParseCvRequestError || error instanceof Error
                         ? error.message
                         : 'An unexpected error occurred.',
             });

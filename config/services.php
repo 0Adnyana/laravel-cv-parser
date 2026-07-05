@@ -40,6 +40,8 @@ return [
         'model' => env('OPENROUTER_MODEL'),
         'base_url' => env('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1'),
         'pdf_engine' => env('OPENROUTER_PDF_ENGINE', 'cloudflare-ai'),
+        'request_timeout' => (int) env('OPENROUTER_REQUEST_TIMEOUT', 60),
+        'parse_time_limit' => (int) env('OPENROUTER_PARSE_TIME_LIMIT', 240),
     ],
 
 ];

@@ -3,10 +3,36 @@
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 
-function fakeOpenRouterCvResponse(array $cvData): void
+function fakeOpenRouterModelsApi(bool $supportsFile = true, string $model = 'anthropic/claude-3.5-sonnet'): void
 {
     Http::fake([
-        'openrouter.ai/*' => Http::response([
+        'openrouter.ai/api/v1/models' => Http::response([
+            'data' => [
+                [
+                    'id' => $model,
+                    'architecture' => [
+                        'input_modalities' => $supportsFile ? ['text', 'file'] : ['text'],
+                    ],
+                ],
+            ],
+        ]),
+    ]);
+}
+
+function fakeOpenRouterCvResponse(array $cvData, bool $supportsFile = true, string $model = 'anthropic/claude-3.5-sonnet'): void
+{
+    Http::fake([
+        'openrouter.ai/api/v1/models' => Http::response([
+            'data' => [
+                [
+                    'id' => $model,
+                    'architecture' => [
+                        'input_modalities' => $supportsFile ? ['text', 'file'] : ['text'],
+                    ],
+                ],
+            ],
+        ]),
+        'openrouter.ai/api/v1/chat/completions' => Http::response([
             'choices' => [
                 [
                     'message' => [
@@ -16,6 +42,34 @@ function fakeOpenRouterCvResponse(array $cvData): void
             ],
         ]),
     ]);
+}
+
+function fakeOpenRouterPdfTextAnnotations(string $text = 'Jane Doe - Software Engineer'): array
+{
+    return [
+        'choices' => [
+            [
+                'message' => [
+                    'content' => 'Acknowledged.',
+                    'annotations' => [
+                        [
+                            'type' => 'file',
+                            'file' => [
+                                'hash' => 'abc123',
+                                'name' => 'resume.pdf',
+                                'content' => [
+                                    [
+                                        'type' => 'text',
+                                        'text' => $text,
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ];
 }
 
 function sampleCvData(): array
@@ -185,4 +239,218 @@ test('parse does not require authentication', function () {
 
     $this->postJson('/api/v1/parse', ['cv' => $file])
         ->assertSuccessful();
+});
+
+test('text-only model uses cloudflare-ai extraction and text-only structuring', function () {
+    config(['services.openrouter.model' => 'openai/gpt-4.1-mini']);
+
+    Http::fake([
+        'openrouter.ai/api/v1/models' => Http::response([
+            'data' => [
+                [
+                    'id' => 'openai/gpt-4.1-mini',
+                    'architecture' => [
+                        'input_modalities' => ['text'],
+                    ],
+                ],
+            ],
+        ]),
+        'openrouter.ai/api/v1/chat/completions' => Http::sequence()
+            ->push(fakeOpenRouterPdfTextAnnotations())
+            ->push([
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => json_encode(sampleCvData(), JSON_THROW_ON_ERROR),
+                        ],
+                    ],
+                ],
+            ]),
+    ]);
+
+    $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
+
+    $this->postJson('/api/v1/parse', ['cv' => $file])
+        ->assertSuccessful()
+        ->assertJsonPath('data.personal_info.first_name', 'Jane');
+
+    Http::assertSentCount(3);
+
+    Http::assertSent(function ($request) {
+        if (! str_contains($request->url(), 'openrouter.ai/api/v1/chat/completions')) {
+            return false;
+        }
+
+        $body = $request->data();
+
+        return ($body['plugins'][0]['pdf']['engine'] ?? null) === 'cloudflare-ai'
+            && collect($body['messages'][1]['content'] ?? [])->contains(
+                fn (array $part): bool => ($part['type'] ?? null) === 'file',
+            );
+    });
+
+    Http::assertSent(function ($request) {
+        if (! str_contains($request->url(), 'openrouter.ai/api/v1/chat/completions')) {
+            return false;
+        }
+
+        $body = $request->data();
+        $content = $body['messages'][1]['content'] ?? [];
+
+        $hasOnlyTextParts = collect($content)->every(
+            fn (array $part): bool => ($part['type'] ?? null) === 'text',
+        );
+        $hasCvTextDelimiter = collect($content)->contains(
+            fn (array $part): bool => str_contains((string) ($part['text'] ?? ''), '--- CV TEXT ---'),
+        );
+
+        return ! array_key_exists('plugins', $body)
+            && $hasOnlyTextParts
+            && $hasCvTextDelimiter;
+    });
+});
+
+test('multimodal pdf parse error triggers text extraction fallback', function () {
+    Http::fake([
+        'openrouter.ai/api/v1/models' => Http::response([
+            'data' => [
+                [
+                    'id' => 'anthropic/claude-3.5-sonnet',
+                    'architecture' => [
+                        'input_modalities' => ['text', 'file'],
+                    ],
+                ],
+            ],
+        ]),
+        'openrouter.ai/api/v1/chat/completions' => Http::sequence()
+            ->push([
+                'error' => [
+                    'message' => 'Unable to parse PDF data from the uploaded file.',
+                ],
+            ], 422)
+            ->push(fakeOpenRouterPdfTextAnnotations())
+            ->push([
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => json_encode(sampleCvData(), JSON_THROW_ON_ERROR),
+                        ],
+                    ],
+                ],
+            ]),
+    ]);
+
+    $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
+
+    $this->postJson('/api/v1/parse', ['cv' => $file])
+        ->assertSuccessful()
+        ->assertJsonPath('data.personal_info.first_name', 'Jane');
+
+    Http::assertSentCount(4);
+});
+
+test('multimodal pdf parse error with failed fallback returns 422', function () {
+    Http::fake([
+        'openrouter.ai/api/v1/models' => Http::response([
+            'data' => [
+                [
+                    'id' => 'anthropic/claude-3.5-sonnet',
+                    'architecture' => [
+                        'input_modalities' => ['text', 'file'],
+                    ],
+                ],
+            ],
+        ]),
+        'openrouter.ai/api/v1/chat/completions' => Http::sequence()
+            ->push([
+                'error' => [
+                    'message' => 'Unable to parse PDF data from the uploaded file.',
+                ],
+            ], 422)
+            ->push([
+                'error' => [
+                    'code' => 503,
+                    'message' => 'Extraction service unavailable.',
+                    'metadata' => [
+                        'provider' => 'DeepInfra',
+                    ],
+                ],
+            ], 503),
+    ]);
+
+    $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
+
+    $this->postJson('/api/v1/parse', ['cv' => $file])
+        ->assertUnprocessable()
+        ->assertJson([
+            'message' => 'The provider is temporarily unavailable. Try again shortly.',
+        ])
+        ->assertJsonMissing(['openrouter_error' => true]);
+});
+
+test('non-pdf openrouter error does not trigger text extraction fallback', function () {
+    Http::fake([
+        'openrouter.ai/api/v1/models' => Http::response([
+            'data' => [
+                [
+                    'id' => 'anthropic/claude-3.5-sonnet',
+                    'architecture' => [
+                        'input_modalities' => ['text', 'file'],
+                    ],
+                ],
+            ],
+        ]),
+        'openrouter.ai/api/v1/chat/completions' => Http::response([
+            'error' => [
+                'code' => 429,
+                'message' => 'Rate limit exceeded.',
+                'metadata' => [
+                    'provider' => 'OpenAI',
+                ],
+            ],
+        ], 429),
+    ]);
+
+    $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
+
+    $this->postJson('/api/v1/parse', ['cv' => $file])
+        ->assertUnprocessable()
+        ->assertJson([
+            'message' => 'The provider is rate limiting requests. Wait and try again, or switch to a different model.',
+        ])
+        ->assertJsonMissing(['openrouter_error' => true]);
+
+    Http::assertSentCount(2);
+});
+
+test('provider returned error surfaces provider rate limit message', function () {
+    Http::fake([
+        'openrouter.ai/api/v1/models' => Http::response([
+            'data' => [
+                [
+                    'id' => 'anthropic/claude-3.5-sonnet',
+                    'architecture' => [
+                        'input_modalities' => ['text', 'file'],
+                    ],
+                ],
+            ],
+        ]),
+        'openrouter.ai/api/v1/chat/completions' => Http::response([
+            'error' => [
+                'code' => 429,
+                'message' => 'Provider returned error',
+                'metadata' => [
+                    'error_type' => 'rate_limit_exceeded',
+                ],
+            ],
+        ], 429),
+    ]);
+
+    $file = UploadedFile::fake()->create('resume.pdf', 100, 'application/pdf');
+
+    $this->postJson('/api/v1/parse', ['cv' => $file])
+        ->assertUnprocessable()
+        ->assertJson([
+            'message' => 'The provider is rate limiting requests. Wait and try again, or switch to a different model.',
+        ]);
 });

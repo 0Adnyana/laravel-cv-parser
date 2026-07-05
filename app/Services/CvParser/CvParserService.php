@@ -4,11 +4,14 @@ namespace App\Services\CvParser;
 
 use App\Enums\EducationLevel;
 use App\Enums\EmploymentType;
+use Illuminate\Http\Client\Response;
 use Illuminate\Http\UploadedFile;
 
 class CvParserService
 {
     private const ALLOWED_PDF_ENGINES = ['cloudflare-ai', 'mistral-ocr', 'native'];
+
+    private const TEXT_EXTRACTION_ENGINE = 'cloudflare-ai';
 
     public function __construct(
         private readonly OpenRouterClient $openRouterClient,
@@ -52,69 +55,26 @@ class CvParserService
             throw new CvParserConfigurationException($warning);
         }
 
+        $parseTimeLimit = (int) config('services.openrouter.parse_time_limit', 240);
+
+        if ($parseTimeLimit > 0) {
+            set_time_limit($parseTimeLimit);
+        }
+
         $config = config('services.openrouter');
-        $pdfContents = file_get_contents($file->getRealPath());
+        [$base64, $filename] = $this->readPdfFile($file);
 
-        if ($pdfContents === false) {
-            throw new CvParserExtractionException('Failed to read uploaded PDF.');
+        if (! $this->openRouterClient->supportsFileInput($config['model'])) {
+            return $this->parseViaTextExtraction($base64, $filename);
         }
 
-        $filename = $file->getClientOriginalName() ?: 'cv.pdf';
-        $base64 = base64_encode($pdfContents);
+        $multimodalResult = $this->attemptParseViaMultimodal($base64, $filename);
 
-        $response = $this->openRouterClient->chatCompletions([
-            'model' => $config['model'],
-            'messages' => [
-                [
-                    'role' => 'system',
-                    'content' => 'You extract structured CV data. Return only valid JSON matching the schema. Use null for unknown scalars, [] for empty lists. No markdown fences.',
-                ],
-                [
-                    'role' => 'user',
-                    'content' => [
-                        [
-                            'type' => 'text',
-                            'text' => $this->extractionPrompt(),
-                        ],
-                        [
-                            'type' => 'file',
-                            'file' => [
-                                'filename' => $filename,
-                                'file_data' => 'data:application/pdf;base64,'.$base64,
-                            ],
-                        ],
-                    ],
-                ],
-            ],
-            'plugins' => [
-                [
-                    'id' => 'file-parser',
-                    'pdf' => [
-                        'engine' => $config['pdf_engine'],
-                    ],
-                ],
-            ],
-        ]);
-
-        if (! $response->successful()) {
-            throw new CvParserExtractionException(
-                'CV extraction failed due to an OpenRouter API error.',
-            );
+        if ($multimodalResult !== null) {
+            return $multimodalResult;
         }
 
-        $content = data_get($response->json(), 'choices.0.message.content');
-
-        if (! is_string($content) || trim($content) === '') {
-            throw new CvParserExtractionException('CV extraction failed: empty model response.');
-        }
-
-        try {
-            $decoded = $this->decodeJson($content);
-        } catch (CvParserExtractionException $exception) {
-            throw new CvParserExtractionException($exception->getMessage(), $content);
-        }
-
-        return $this->mapper->map($decoded);
+        return $this->parseViaTextExtraction($base64, $filename);
     }
 
     public function extractionPrompt(): string
@@ -195,6 +155,257 @@ Return JSON with this exact shape:
   "linkedin_url": null
 }
 PROMPT;
+    }
+
+    /**
+     * @return array{personal_info: array<string, mixed>, experience_education: array<string, mixed>, skills_portfolio: array<string, mixed>}|null
+     */
+    private function attemptParseViaMultimodal(string $base64, string $filename): ?array
+    {
+        $config = config('services.openrouter');
+
+        $response = $this->openRouterClient->chatCompletions([
+            'model' => $config['model'],
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => $this->structuringSystemPrompt(),
+                ],
+                [
+                    'role' => 'user',
+                    'content' => [
+                        [
+                            'type' => 'text',
+                            'text' => $this->extractionPrompt(),
+                        ],
+                        [
+                            'type' => 'file',
+                            'file' => [
+                                'filename' => $filename,
+                                'file_data' => 'data:application/pdf;base64,'.$base64,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            'plugins' => [
+                [
+                    'id' => 'file-parser',
+                    'pdf' => [
+                        'engine' => $config['pdf_engine'],
+                    ],
+                ],
+            ],
+        ]);
+
+        if (! $response->successful()) {
+            if ($this->isPdfParseError($response)) {
+                return null;
+            }
+
+            $this->throwOpenRouterResponse($response);
+        }
+
+        return $this->mapStructuredResponse($response);
+    }
+
+    /**
+     * @return array{personal_info: array<string, mixed>, experience_education: array<string, mixed>, skills_portfolio: array<string, mixed>}
+     */
+    private function parseViaTextExtraction(string $base64, string $filename): array
+    {
+        $extractedText = $this->extractPdfText($base64, $filename);
+
+        $response = $this->openRouterClient->chatCompletions([
+            'model' => config('services.openrouter.model'),
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => $this->structuringSystemPrompt(),
+                ],
+                [
+                    'role' => 'user',
+                    'content' => [
+                        [
+                            'type' => 'text',
+                            'text' => $this->extractionPrompt(),
+                        ],
+                        [
+                            'type' => 'text',
+                            'text' => "--- CV TEXT ---\n{$extractedText}",
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        if (! $response->successful()) {
+            $this->throwOpenRouterResponse($response);
+        }
+
+        return $this->mapStructuredResponse($response);
+    }
+
+    private function extractPdfText(string $base64, string $filename): string
+    {
+        $response = $this->openRouterClient->chatCompletions([
+            'model' => config('services.openrouter.model'),
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'Acknowledge receipt of the CV document. The extracted text is returned via file annotations.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => [
+                        [
+                            'type' => 'text',
+                            'text' => 'Extract all text from this CV PDF.',
+                        ],
+                        [
+                            'type' => 'file',
+                            'file' => [
+                                'filename' => $filename,
+                                'file_data' => 'data:application/pdf;base64,'.$base64,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            'plugins' => [
+                [
+                    'id' => 'file-parser',
+                    'pdf' => [
+                        'engine' => self::TEXT_EXTRACTION_ENGINE,
+                    ],
+                ],
+            ],
+        ]);
+
+        $annotations = data_get($response->json(), 'choices.0.message.annotations');
+
+        if (is_array($annotations)) {
+            $text = $this->parseFileAnnotations($annotations);
+
+            if ($text !== '') {
+                return $text;
+            }
+        }
+
+        $errorAnnotations = data_get($response->json(), 'error.metadata.file_annotations');
+
+        if (is_array($errorAnnotations)) {
+            $text = $this->parseFileAnnotations($errorAnnotations);
+
+            if ($text !== '') {
+                return $text;
+            }
+        }
+
+        if (! $response->successful()) {
+            $this->throwOpenRouterResponse($response);
+        }
+
+        throw new CvParserExtractionException('CV extraction failed: could not extract text from PDF.');
+    }
+
+    /**
+     * @param  array<int, mixed>  $annotations
+     */
+    private function parseFileAnnotations(array $annotations): string
+    {
+        $textParts = [];
+
+        foreach ($annotations as $annotation) {
+            if (! is_array($annotation) || ($annotation['type'] ?? null) !== 'file') {
+                continue;
+            }
+
+            $content = data_get($annotation, 'file.content');
+
+            if (! is_array($content)) {
+                continue;
+            }
+
+            foreach ($content as $part) {
+                if (! is_array($part) || ($part['type'] ?? null) !== 'text') {
+                    continue;
+                }
+
+                $text = $part['text'] ?? null;
+
+                if (is_string($text) && trim($text) !== '') {
+                    $textParts[] = trim($text);
+                }
+            }
+        }
+
+        return implode("\n\n", $textParts);
+    }
+
+    private function isPdfParseError(Response $response): bool
+    {
+        $haystacks = [
+            (string) data_get($response->json(), 'error.message'),
+            (string) data_get($response->json(), 'message'),
+            $response->body(),
+        ];
+
+        foreach ($haystacks as $haystack) {
+            if ($haystack !== '' && stripos($haystack, 'unable to parse pdf') !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    private function readPdfFile(UploadedFile $file): array
+    {
+        $pdfContents = file_get_contents($file->getRealPath());
+
+        if ($pdfContents === false) {
+            throw new CvParserExtractionException('Failed to read uploaded PDF.');
+        }
+
+        $filename = $file->getClientOriginalName() ?: 'cv.pdf';
+
+        return [base64_encode($pdfContents), $filename];
+    }
+
+    private function structuringSystemPrompt(): string
+    {
+        return 'You extract structured CV data. Return only valid JSON matching the schema. Use null for unknown scalars, [] for empty lists. No markdown fences.';
+    }
+
+    /**
+     * @return array{personal_info: array<string, mixed>, experience_education: array<string, mixed>, skills_portfolio: array<string, mixed>}
+     */
+    private function mapStructuredResponse(Response $response): array
+    {
+        $content = data_get($response->json(), 'choices.0.message.content');
+
+        if (! is_string($content) || trim($content) === '') {
+            throw new CvParserExtractionException('CV extraction failed: empty model response.');
+        }
+
+        try {
+            $decoded = $this->decodeJson($content);
+        } catch (CvParserExtractionException $exception) {
+            throw new CvParserExtractionException($exception->getMessage(), $content);
+        }
+
+        return $this->mapper->map($decoded);
+    }
+
+    private function throwOpenRouterResponse(Response $response): never
+    {
+        throw new CvParserExtractionException(
+            OpenRouterError::fromResponse($response)->userMessage(),
+        );
     }
 
     /**

@@ -4,6 +4,13 @@ import type {
     ParserStatusResponse,
 } from '@/types/cv-parser';
 
+export class ParseCvRequestError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ParseCvRequestError';
+    }
+}
+
 export async function fetchParserStatus(): Promise<ParserStatusResponse> {
     const response = await fetch('/api/v1/status', {
         headers: {
@@ -38,10 +45,12 @@ export async function parseCv(file: File): Promise<ParseCvResponse> {
         const error = payload as ParseCvErrorResponse;
 
         if (error.errors?.cv?.length) {
-            throw new Error(error.errors.cv[0]);
+            throw new ParseCvRequestError(error.errors.cv[0]);
         }
 
-        throw new Error(error.message ?? 'Failed to parse CV.');
+        throw new ParseCvRequestError(
+            error.message ?? 'Failed to parse CV.',
+        );
     }
 
     return payload as ParseCvResponse;

@@ -96,9 +96,116 @@ The parse endpoint MUST NOT require authentication.
 - **WHEN** a client POSTs without a `cv` field
 - **THEN** the system returns HTTP 422 with validation errors for `cv`
 
+### Requirement: OpenRouter model capability detection
+
+Before parsing a CV, the service MUST determine whether the configured `OPENROUTER_MODEL` supports native `file` input by querying OpenRouter's models API (`GET /api/v1/models`) and inspecting `architecture.input_modalities` for the matching model slug.
+
+The lookup MUST use the same base URL and API key as chat completions. The lookup MAY be cached in memory for the duration of a single parse request.
+
+If the models API is unreachable or the configured slug is not found, the service MUST assume the model does NOT support native `file` input and route to the text-extraction path.
+
+#### Scenario: Text-only model detected proactively
+
+- **WHEN** `OPENROUTER_MODEL` is set to a model whose `architecture.input_modalities` does not include `file`
+- **AND** a valid PDF is uploaded
+- **THEN** the parser uses the text-extraction path without first attempting the multimodal path
+
+#### Scenario: File-capable model uses multimodal path first
+
+- **WHEN** `OPENROUTER_MODEL` is set to a model whose `architecture.input_modalities` includes `file`
+- **AND** a valid PDF is uploaded
+- **THEN** the parser attempts the multimodal path first
+
+#### Scenario: Unknown model slug defaults to text-extraction path
+
+- **WHEN** the configured model slug is not present in the models API response
+- **AND** a valid PDF is uploaded
+- **THEN** the parser uses the text-extraction path
+
+### Requirement: PDF text extraction via OpenRouter file-parser
+
+The text-extraction path MUST extract plain text from the uploaded PDF using OpenRouter's `file-parser` plugin with engine `cloudflare-ai` (OpenRouter's lightweight text-extraction engine; deprecated `pdf-text` redirects here).
+
+The extraction request MUST:
+
+- Encode the PDF as base64 in a `file` content part (`data:application/pdf;base64,{payload}`)
+- Include `plugins: [{ "id": "file-parser", "pdf": { "engine": "cloudflare-ai" } }]`
+- Use a minimal system prompt instructing the model to acknowledge receipt of extracted content (the actual CV text is obtained from response annotations, not from model-generated prose)
+
+Extracted text MUST be read from `choices[0].message.annotations` where `type` is `file`, concatenating all `content` parts where `type` is `text`. If annotations are absent on a successful response, extracted text MAY be taken from `error.metadata.file_annotations` on a failed extraction response (same schema).
+
+If no extractable text is found, the parser MUST throw `CvParserExtractionException` with message `CV extraction failed: could not extract text from PDF.`
+
+#### Scenario: Text extracted from file annotations
+
+- **WHEN** the text-extraction request returns HTTP 200
+- **AND** `choices[0].message.annotations` contains a `file` annotation with text content parts
+- **THEN** the parser concatenates annotation text blocks into a single string for the structuring call
+
+#### Scenario: Text extracted from error metadata annotations
+
+- **WHEN** the text-extraction request returns a non-success HTTP status
+- **AND** `error.metadata.file_annotations` contains text content parts
+- **THEN** the parser uses those annotations as the extracted text
+
+#### Scenario: Extraction uses cloudflare-ai engine
+
+- **WHEN** the text-extraction path runs
+- **THEN** the outbound request includes `"id": "file-parser"` with `"engine": "cloudflare-ai"`
+
+### Requirement: Text-only structuring call
+
+After PDF text is extracted, the parser MUST send a second chat-completions request that structures CV data from plain text only:
+
+- User message content MUST be two `text` parts: the extraction prompt, then a delimiter block containing the extracted PDF text (e.g. `--- CV TEXT ---\n{text}`)
+- The request MUST NOT include a `file` content part
+- The request MUST NOT include the `file-parser` plugin
+- The system prompt MUST remain: `"You extract structured CV data. Return only valid JSON matching the schema. Use null for unknown scalars, [] for empty lists. No markdown fences."`
+
+JSON decoding, mapping, and error handling for the structuring response MUST follow existing parser rules.
+
+#### Scenario: Structuring call is text-only
+
+- **WHEN** the text-extraction path completes extraction
+- **THEN** the structuring outbound request contains only `text` content parts and no `plugins` array
+
+#### Scenario: Successful text-extraction path returns mapped data
+
+- **WHEN** both extraction and structuring calls succeed with valid JSON
+- **THEN** the API returns HTTP 200 with onboarding-shaped `data` payload
+
+### Requirement: PDF-parse error reactive fallback
+
+When the multimodal path fails, the parser MUST inspect the OpenRouter error response body (JSON `error.message`, top-level `message`, or raw body string). If the body matches a PDF-parse failure pattern — case-insensitive substring match against `unable to parse pdf` — the parser MUST automatically retry once via the text-extraction path before returning HTTP 422.
+
+The fallback MUST NOT retry if the text-extraction path was already used (preemptive routing or prior fallback).
+
+#### Scenario: Multimodal PDF-parse error triggers fallback
+
+- **WHEN** the multimodal path returns a non-success response whose body contains `unable to parse pdf`
+- **AND** the configured model supports `file` input
+- **THEN** the parser retries via the text-extraction path
+- **THEN** a successful structuring response returns HTTP 200
+
+#### Scenario: Non-PDF errors do not trigger fallback
+
+- **WHEN** the multimodal path returns a non-success response whose body does not match PDF-parse patterns
+- **THEN** the parser returns HTTP 422 without retrying via text extraction
+
+#### Scenario: Fallback failure surfaces original error context
+
+- **WHEN** the multimodal path fails with a PDF-parse error
+- **AND** the text-extraction path also fails
+- **THEN** the parser returns HTTP 422 with an extraction error message
+
 ### Requirement: Multimodal PDF extraction via OpenRouter
 
-The parser MUST send the uploaded PDF to OpenRouter using chat completions with the OpenRouter `file-parser` plugin:
+The parser MUST support two extraction strategies selected automatically:
+
+1. **Multimodal path** (default for models with `file` input modality): send the uploaded PDF to OpenRouter using chat completions with the OpenRouter `file-parser` plugin.
+2. **Text-extraction path** (for text-only models or PDF-parse fallback): extract PDF text via `cloudflare-ai`, then structure via a text-only chat completion.
+
+**Multimodal path** MUST:
 
 - Encode the PDF as base64
 - Include it in the user message as a `file` content part with `file_data` URL form `data:application/pdf;base64,{payload}`
@@ -114,7 +221,7 @@ OpenRouter request headers MUST include:
 - `HTTP-Referer: {APP_URL}`
 - `X-Title: {APP_NAME}`
 
-On OpenRouter HTTP errors or non-JSON model output, the parser MUST return HTTP 422 with `{ "message": "<error>", "raw_content": "<optional model text>" }`.
+On OpenRouter HTTP errors or non-JSON model output (after any permitted text-extraction fallback), the parser MUST return HTTP 422 with `{ "message": "<error>", "raw_content": "<optional model text>" }`.
 
 #### Scenario: Successful OpenRouter response
 
@@ -127,10 +234,15 @@ On OpenRouter HTTP errors or non-JSON model output, the parser MUST return HTTP 
 - **WHEN** OpenRouter returns content like `` ```json\n{...}\n``` ``
 - **THEN** the parser strips fences and decodes the JSON successfully
 
-#### Scenario: Parse request includes file-parser plugin
+#### Scenario: Parse request includes file-parser plugin on multimodal path
 
-- **WHEN** a valid PDF parse request is sent to OpenRouter
+- **WHEN** a valid PDF parse request is sent via the multimodal path
 - **THEN** the outbound request includes `"id": "file-parser"` with configured PDF engine
+
+#### Scenario: Text-only model skips multimodal file attachment
+
+- **WHEN** the configured model lacks `file` input modality
+- **THEN** the outbound structuring request does not include a `file` content part
 
 ### Requirement: Extraction prompt schema and enum values
 
@@ -218,11 +330,26 @@ Tests MUST cover at minimum:
 - Missing OpenRouter config returns HTTP 503 without outbound call
 - Invalid file type returns HTTP 422
 - Status endpoint reflects configuration state
-- Parse request includes `file-parser` plugin with configured PDF engine
+- Parse request includes `file-parser` plugin with configured PDF engine on multimodal path
+- Text-only model routes to text-extraction path (models API returns no `file` modality)
+- PDF-parse error on multimodal path triggers text-extraction fallback and succeeds
+- PDF-parse error fallback failure returns HTTP 422
 
 #### Scenario: CI test fakes OpenRouter
 
 - **WHEN** the parse feature test runs
 - **THEN** `Http::fake()` intercepts OpenRouter requests
 - **THEN** the test passes without network access to openrouter.ai
+
+#### Scenario: Text-only model test fakes models API and two-step parse
+
+- **WHEN** a test configures a text-only model via mocked models API
+- **THEN** the test asserts an extraction call with `cloudflare-ai` engine
+- **THEN** the test asserts a follow-up text-only structuring call without `file` parts
+
+#### Scenario: PDF-parse fallback test fakes retry
+
+- **WHEN** a test fakes a multimodal failure with `unable to parse pdf` in the error body
+- **THEN** the test asserts a subsequent text-extraction path call
+- **THEN** the test asserts HTTP 200 on successful fallback
 
