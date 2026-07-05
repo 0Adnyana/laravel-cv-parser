@@ -28,7 +28,11 @@ RUN composer install --no-dev --no-interaction --prefer-dist --no-scripts --no-a
 
 COPY . .
 
-RUN mkdir -p bootstrap/cache storage/framework/{cache,sessions,views} storage/logs \
+RUN mkdir -p bootstrap/cache \
+    storage/framework/cache \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
     && composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader \
     && php artisan wayfinder:generate --no-interaction \
     && npm ci \
@@ -47,7 +51,7 @@ COPY --from=builder /app /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cache \
+    && mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache \
     && chmod -R 775 storage bootstrap/cache \
     && chmod +x docker/entrypoint.sh
