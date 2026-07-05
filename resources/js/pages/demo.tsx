@@ -1,6 +1,6 @@
 import { Head } from '@inertiajs/react';
 import { AlertCircleIcon, FileTextIcon } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,80 +13,42 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
-import { fetchParserStatus, parseCv } from '@/lib/parse-cv';
-import type { ParseCvData } from '@/types/cv-parser';
-
-type UiState = 'idle' | 'processing' | 'success' | 'error';
+import {
+    selectIsSubmitDisabled,
+    useDemoStore,
+} from '@/stores/demo-store';
 
 export default function Demo() {
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const [selectedFile, setSelectedFile] = useState<File | null>(null);
-    const [statusAvailable, setStatusAvailable] = useState(false);
-    const [statusWarning, setStatusWarning] = useState<string | null>(null);
-    const [statusLoading, setStatusLoading] = useState(true);
-    const [uiState, setUiState] = useState<UiState>('idle');
-    const [errorMessage, setErrorMessage] = useState<string | null>(null);
-    const [result, setResult] = useState<ParseCvData | null>(null);
+    const selectedFile = useDemoStore((state) => state.selectedFile);
+    const statusAvailable = useDemoStore((state) => state.statusAvailable);
+    const statusWarning = useDemoStore((state) => state.statusWarning);
+    const statusLoading = useDemoStore((state) => state.statusLoading);
+    const uiState = useDemoStore((state) => state.uiState);
+    const errorMessage = useDemoStore((state) => state.errorMessage);
+    const result = useDemoStore((state) => state.result);
+    const fetchStatus = useDemoStore((state) => state.fetchStatus);
+    const selectFile = useDemoStore((state) => state.selectFile);
+    const submitParse = useDemoStore((state) => state.submitParse);
+    const submitDisabled = useDemoStore(selectIsSubmitDisabled);
 
     useEffect(() => {
-        fetchParserStatus()
-            .then((status) => {
-                setStatusAvailable(status.available);
-                setStatusWarning(status.warning);
-            })
-            .catch(() => {
-                setStatusAvailable(false);
-                setStatusWarning('Unable to check parser status.');
-            })
-            .finally(() => {
-                setStatusLoading(false);
-            });
-    }, []);
+        fetchStatus();
+    }, [fetchStatus]);
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0] ?? null;
-        setSelectedFile(file);
-        setErrorMessage(null);
-        setResult(null);
-        setUiState('idle');
+        selectFile(event.target.files?.[0] ?? null);
     };
 
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
 
-        if (!selectedFile || !statusAvailable || uiState === 'processing') {
-            return;
-        }
+        const success = await submitParse();
 
-        setUiState('processing');
-        setErrorMessage(null);
-        setResult(null);
-
-        try {
-            const response = await parseCv(selectedFile);
-            setResult(response.data);
-            setSelectedFile(null);
-
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
-            }
-
-            setUiState('success');
-        } catch (error) {
-            setUiState('error');
-            setErrorMessage(
-                error instanceof Error
-                    ? error.message
-                    : 'An unexpected error occurred.',
-            );
+        if (success && fileInputRef.current) {
+            fileInputRef.current.value = '';
         }
     };
-
-    const submitDisabled =
-        statusLoading ||
-        !statusAvailable ||
-        !selectedFile ||
-        uiState === 'processing';
 
     return (
         <>
