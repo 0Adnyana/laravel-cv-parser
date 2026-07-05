@@ -28,7 +28,7 @@ RUN composer install --no-dev --no-interaction --prefer-dist --no-scripts --no-a
 
 COPY . .
 
-RUN mkdir -p bootstrap/cache \
+RUN mkdir -p bootstrap/cache storage/framework/{cache,sessions,views} storage/logs \
     && composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader \
     && php artisan wayfinder:generate --no-interaction \
     && npm ci \
