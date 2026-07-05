@@ -26,7 +26,7 @@ test('extraction prompt does not list shorthand education aliases as allowed val
     $service = app(CvParserService::class);
     $prompt = $service->extractionPrompt();
 
-    expect($prompt)->toContain('Do not output shorthand education aliases "associate" or "phd"');
+    expect($prompt)->toContain('Do NOT use shorthand aliases such as associate or phd');
 });
 
 test('json wrapped in markdown fences is decoded successfully', function () {

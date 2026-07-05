@@ -91,13 +91,13 @@ export default function Demo() {
     return (
         <>
             <Head title="CV Parser Demo" />
-            <div className="bg-background min-h-screen p-6 md:p-10">
+            <div className="min-h-screen bg-background p-6 md:p-10">
                 <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
                     <div className="space-y-2">
                         <h1 className="text-3xl font-semibold tracking-tight">
                             CV Parser Demo
                         </h1>
-                        <p className="text-muted-foreground text-sm">
+                        <p className="text-sm text-muted-foreground">
                             Upload a PDF resume to extract structured JSON via
                             OpenRouter.
                         </p>
@@ -141,7 +141,10 @@ export default function Demo() {
                                 </div>
 
                                 <div className="flex items-center gap-3">
-                                    <Button type="submit" disabled={submitDisabled}>
+                                    <Button
+                                        type="submit"
+                                        disabled={submitDisabled}
+                                    >
                                         {uiState === 'processing' ? (
                                             <>
                                                 <Spinner />
@@ -155,11 +158,12 @@ export default function Demo() {
                                         )}
                                     </Button>
 
-                                    {selectedFile && uiState !== 'processing' && (
-                                        <span className="text-muted-foreground text-sm">
-                                            {selectedFile.name}
-                                        </span>
-                                    )}
+                                    {selectedFile &&
+                                        uiState !== 'processing' && (
+                                            <span className="text-sm text-muted-foreground">
+                                                {selectedFile.name}
+                                            </span>
+                                        )}
                                 </div>
                             </form>
                         </CardContent>
@@ -184,7 +188,7 @@ export default function Demo() {
                                 </CardDescription>
                             </CardHeader>
                             <CardContent>
-                                <pre className="bg-muted overflow-x-auto rounded-lg p-4 text-xs leading-relaxed">
+                                <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-xs leading-relaxed">
                                     {JSON.stringify(result, null, 2)}
                                 </pre>
                             </CardContent>

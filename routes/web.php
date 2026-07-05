@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 
-Route::redirect('/', '/demo');
+Route::redirect('/', '/demo')->name('home');
 Route::inertia('/demo', 'demo')->name('demo');
 
 Route::middleware(['auth', 'verified'])->group(function () {
