@@ -1,7 +1,6 @@
 <?php
 
-test('returns a successful response', function () {
-    $response = $this->get(route('home'));
-
-    $response->assertOk();
+test('root redirects to demo page', function () {
+    $this->get('/')
+        ->assertRedirect('/demo');
 });
