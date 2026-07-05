@@ -28,7 +28,8 @@ RUN composer install --no-dev --no-interaction --prefer-dist --no-scripts --no-a
 
 COPY . .
 
-RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader \
+RUN mkdir -p bootstrap/cache \
+    && composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader \
     && php artisan wayfinder:generate --no-interaction \
     && npm ci \
     && npm run build \
