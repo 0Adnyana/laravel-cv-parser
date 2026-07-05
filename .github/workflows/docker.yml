@@ -25,7 +25,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: your-dockerhub-username/your-image-name
+          images: 0adnyana/laravel-cv-parser
 
       - name: Build and push
         uses: docker/build-push-action@v6
