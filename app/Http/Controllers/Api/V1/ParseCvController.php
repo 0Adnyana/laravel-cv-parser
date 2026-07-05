@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ParseCvRequest;
-use App\Services\CvParser\CvParserConfigurationException;
-use App\Services\CvParser\CvParserExtractionException;
 use App\Services\CvParser\CvParserService;
+use App\Services\CvParser\Exceptions\CvParserConfigurationException;
+use App\Services\CvParser\Exceptions\CvParserExtractionException;
 use Illuminate\Http\JsonResponse;
 
 class ParseCvController extends Controller

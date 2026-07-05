@@ -1,6 +1,6 @@
 <?php
 
-use App\Services\CvParser\OpenRouterError;
+use App\Services\CvParser\OpenRouter\OpenRouterError;
 use GuzzleHttp\Psr7\Response as PsrResponse;
 use Illuminate\Http\Client\Response;
 

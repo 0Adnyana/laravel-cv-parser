@@ -3,14 +3,14 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Services\CvParser\CvParserService;
+use App\Services\CvParser\Configuration\CvParserConfiguration;
 use Illuminate\Http\JsonResponse;
 
 class StatusController extends Controller
 {
-    public function __invoke(CvParserService $cvParserService): JsonResponse
+    public function __invoke(CvParserConfiguration $configuration): JsonResponse
     {
-        $warning = $cvParserService->getConfigurationWarning();
+        $warning = $configuration->getWarning();
 
         return response()->json([
             'available' => $warning === null,

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services\CvParser;
+namespace App\Services\CvParser\OpenRouter;
 
 use Illuminate\Http\Client\Response;
 

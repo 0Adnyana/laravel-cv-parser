@@ -1,6 +1,6 @@
 <?php
 
-use App\Services\CvParser\OnboardingFieldMapper;
+use App\Services\CvParser\Mapping\OnboardingFieldMapper;
 
 test('mapper splits au local phone into code and number', function () {
     $mapper = app(OnboardingFieldMapper::class);
