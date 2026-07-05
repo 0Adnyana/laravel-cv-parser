@@ -28,3 +28,7 @@ yarn-error.log
 /.vscode
 /.zed
 /openspec/changes/archive/*
+
+**/caddy
+frankenphp
+frankenphp-worker.php

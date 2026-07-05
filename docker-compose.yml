@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    container_name: laravel-cv-parser
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Remap the host port when running multiple apps on one host, e.g. "9080:8000"
+      - "8000:8000"
+    volumes:
+      - app-logs:/app/storage/logs
+
+volumes:
+  app-logs:
