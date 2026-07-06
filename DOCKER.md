@@ -24,7 +24,13 @@ Run the full application (Inertia web UI + `/api/v1/*` API) in a single containe
    - `DB_*` — external database credentials
    - `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`
 
-3. Build the image:
+3. Pull the image (or build locally on Apple Silicon if pull fails — see below):
+
+   ```bash
+   docker compose pull
+   ```
+
+   On **ARM64** hosts, if pull fails with `no matching manifest for linux/arm64`, build locally:
 
    ```bash
    docker compose build
@@ -157,7 +163,7 @@ Application logs are persisted in the `app-logs` Docker volume (`storage/logs` i
 ## Updating
 
 ```bash
-docker compose build
+docker compose pull
 docker compose run --rm app php artisan migrate --force
 docker compose up -d
 ```

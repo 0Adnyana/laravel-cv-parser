@@ -101,7 +101,7 @@ Error responses:
 
 ## Self-hosting (Docker)
 
-The recommended production setup is a **single container** (FrankenPHP + Laravel Octane). No database is bundled — point `DB_*` at PostgreSQL, MySQL, or SQLite.
+The recommended production setup is a **single container** (FrankenPHP + Laravel Octane) pulled from [Docker Hub](https://hub.docker.com/r/0adnyana/laravel-cv-parser) as `0adnyana/laravel-cv-parser:latest`. No database is bundled — point `DB_*` at PostgreSQL, MySQL, or SQLite.
 
 ### Requirements
 
@@ -135,14 +135,24 @@ DB_USERNAME=your_user
 DB_PASSWORD=your_password
 ```
 
-Build, migrate, and run:
+Pull, migrate, and run:
 
 ```bash
-docker compose build
+docker compose pull
 docker compose run --rm app php artisan key:generate
 docker compose run --rm app php artisan migrate --force
 docker compose up -d
 ```
+
+On **Apple Silicon (ARM64)**, if `docker compose pull` fails with a platform error, build the image locally instead:
+
+```bash
+docker compose up --build -d
+docker compose run --rm app php artisan key:generate
+docker compose run --rm app php artisan migrate --force
+```
+
+Published images support both `linux/amd64` and `linux/arm64` after the next CI publish to Docker Hub.
 
 Verify:
 
@@ -181,11 +191,15 @@ cv.example.com {
 
 ### Updating
 
+Pull the latest image, run migrations, and restart:
+
 ```bash
-docker compose build
+docker compose pull
 docker compose run --rm app php artisan migrate --force
 docker compose up -d
 ```
+
+To pin a release, set the `image` tag in `docker-compose.yml` (e.g. `0adnyana/laravel-cv-parser:v1.0.0`) instead of `:latest`.
 
 See [DOCKER.md](DOCKER.md) for SQLite volumes, Redis, logs, and other deployment details.
 
