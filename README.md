@@ -101,7 +101,9 @@ Error responses:
 
 ## Self-hosting (Docker)
 
-The recommended production setup is a **single container** (FrankenPHP + Laravel Octane) pulled from [Docker Hub](https://hub.docker.com/r/0adnyana/laravel-cv-parser) as `0adnyana/laravel-cv-parser:latest`. No database is bundled — point `DB_*` at PostgreSQL, MySQL, or SQLite.
+The recommended production setup is a **single container** (FrankenPHP + Laravel Octane) pulled from [Docker Hub](https://hub.docker.com/r/0adnyana/laravel-cv-parser) as `0adnyana/laravel-cv-parser:main`. No database is bundled — point `DB_*` at PostgreSQL, MySQL, or SQLite.
+
+Compose mounts your host `.env` into the container at `/app/.env` (required for Laravel and `php artisan key:generate`). Keep `.env` in the project root next to `docker-compose.yml`.
 
 ### Requirements
 
@@ -117,9 +119,10 @@ cd laravel-cv-parser
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` (set `APP_ENV=production` for production deployments):
 
 ```env
+APP_ENV=production
 APP_KEY=                          # generate — see below
 APP_URL=https://cv.example.com    # public URL (HTTPS if behind a proxy)
 TRUSTED_PROXIES=*                 # required when behind Caddy/NPM/Traefik
@@ -128,31 +131,37 @@ OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=google/gemini-2.5-flash-lite-preview-09-2025
 
 DB_CONNECTION=pgsql               # or mysql, sqlite
-DB_HOST=your-db-host
+DB_HOST=your-db-host              # use host.docker.internal when Postgres/MySQL runs on the same machine as Docker
 DB_PORT=5432
 DB_DATABASE=laravel_cv_parser
 DB_USERNAME=your_user
 DB_PASSWORD=your_password
 ```
 
+Generate `APP_KEY` on the host or in a one-off container (writes back to your mounted `.env`):
+
+```bash
+php artisan key:generate
+# or: docker compose run --rm app php artisan key:generate
+```
+
 Pull, migrate, and run:
 
 ```bash
 docker compose pull
-docker compose run --rm app php artisan key:generate
 docker compose run --rm app php artisan migrate --force
 docker compose up -d
 ```
 
-On **Apple Silicon (ARM64)**, if `docker compose pull` fails with a platform error, build the image locally instead:
+On **Apple Silicon (ARM64)**, if `docker compose pull` fails with a platform error, build locally instead (compose includes `build: .` as a fallback):
 
 ```bash
-docker compose up --build -d
-docker compose run --rm app php artisan key:generate
+docker compose build
 docker compose run --rm app php artisan migrate --force
+docker compose up -d
 ```
 
-Published images support both `linux/amd64` and `linux/arm64` after the next CI publish to Docker Hub.
+Published images support both `linux/amd64` and `linux/arm64`.
 
 Verify:
 
@@ -162,6 +171,22 @@ curl http://localhost:8000/api/v1/status
 ```
 
 Open `http://localhost:8000/demo` in a browser.
+
+### Database on the same machine
+
+Inside a container, `127.0.0.1` is the container itself — not your Mac or Linux host. If PostgreSQL or MySQL runs on the host (as your `\conninfo` session does), set:
+
+```env
+DB_HOST=host.docker.internal
+```
+
+Then retry:
+
+```bash
+docker compose run --rm app php artisan migrate --force
+```
+
+Ensure PostgreSQL accepts TCP connections on port 5432 (not just a local socket). If migration still fails, check `listen_addresses` in `postgresql.conf` and host-based auth in `pg_hba.conf`.
 
 ### Port mapping
 
@@ -199,7 +224,7 @@ docker compose run --rm app php artisan migrate --force
 docker compose up -d
 ```
 
-To pin a release, set the `image` tag in `docker-compose.yml` (e.g. `0adnyana/laravel-cv-parser:v1.0.0`) instead of `:latest`.
+To pin a release, set the `image` tag in `docker-compose.yml` (e.g. `0adnyana/laravel-cv-parser:v1.0.0`) instead of `:main`.
 
 See [DOCKER.md](DOCKER.md) for SQLite volumes, Redis, logs, and other deployment details.
 

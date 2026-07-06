@@ -66,6 +66,14 @@ ports:
 
 The container always listens on port **8000**.
 
+## Database on the Same Machine
+
+Inside a container, `127.0.0.1` refers to the container — not the host where PostgreSQL or MySQL may be running. Set `DB_HOST=host.docker.internal` in `.env` when the database runs on the same machine as Docker.
+
+`docker-compose.yml` includes `extra_hosts: host.docker.internal:host-gateway` so this works on Linux as well as Docker Desktop.
+
+Ensure your database server accepts TCP connections (PostgreSQL: `listen_addresses` and `pg_hba.conf`).
+
 ## Database Options
 
 ### PostgreSQL
