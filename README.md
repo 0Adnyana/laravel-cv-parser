@@ -101,55 +101,42 @@ Error responses:
 
 ## Self-hosting (Docker)
 
-The recommended production setup is a **single container** (FrankenPHP + Laravel Octane) pulled from [Docker Hub](https://hub.docker.com/r/0adnyana/laravel-cv-parser) as `0adnyana/laravel-cv-parser:main`. No database is bundled — point `DB_*` at PostgreSQL, MySQL, or SQLite.
+The recommended production setup is a **single container** (FrankenPHP + Laravel Octane) pulled from [Docker Hub](https://hub.docker.com/r/0adnyana/laravel-cv-parser) as `0adnyana/laravel-cv-parser:main`. No database is bundled — point `DB_*` or `DB_URL` at PostgreSQL, MySQL, or SQLite.
 
-Compose mounts your host `.env` into the container at `/app/.env` (required for Laravel and `php artisan key:generate`). Keep `.env` in the project root next to `docker-compose.yml`.
+Configure the app with **container environment variables** (Portainer stack UI, compose `environment`, or an optional local `.env` for CLI). No host `.env` bind mount is required. `APP_KEY` is auto-generated on first start when omitted; migrations run automatically once when database env vars are set.
 
 ### Requirements
 
-- Docker and Docker Compose
+- Docker and Docker Compose (or Portainer)
 - External database
 - [OpenRouter](https://openrouter.ai/) API key and model name
 
-### Quick start
+### Quick start (Portainer)
 
-```bash
-git clone https://github.com/0adnyana/laravel-cv-parser.git
-cd laravel-cv-parser
-cp .env.example .env
-```
-
-Edit `.env` (set `APP_ENV=production` for production deployments):
+1. Create a stack from `docker-compose.yml`.
+2. Add environment variables:
 
 ```env
 APP_ENV=production
-APP_KEY=                          # generate — see below
-APP_URL=https://cv.example.com    # public URL (HTTPS if behind a proxy)
-TRUSTED_PROXIES=*                 # required when behind Caddy/NPM/Traefik
+APP_URL=https://cv.example.com
+TRUSTED_PROXIES=*
 
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=google/gemini-2.5-flash-lite-preview-09-2025
 
-DB_CONNECTION=pgsql               # or mysql, sqlite
-DB_HOST=your-db-host              # use host.docker.internal when Postgres/MySQL runs on the same machine as Docker
-DB_PORT=5432
-DB_DATABASE=laravel_cv_parser
-DB_USERNAME=your_user
-DB_PASSWORD=your_password
+DB_URL=postgresql://USER:PASSWORD@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require
 ```
 
-Generate `APP_KEY` on the host or in a one-off container (writes back to your mounted `.env`):
+3. Deploy. First start generates `APP_KEY` and runs migrations.
+
+### Quick start (Docker Compose CLI)
 
 ```bash
-php artisan key:generate
-# or: docker compose run --rm app php artisan key:generate
-```
-
-Pull, migrate, and run:
-
-```bash
+git clone https://github.com/0adnyana/laravel-cv-parser.git
+cd laravel-cv-parser
+cp .env.example .env   # optional — loaded by compose when present, not mounted into the container
+# Edit .env, then:
 docker compose pull
-docker compose run --rm app php artisan migrate --force
 docker compose up -d
 ```
 
@@ -157,7 +144,6 @@ On **Apple Silicon (ARM64)**, if `docker compose pull` fails with a platform err
 
 ```bash
 docker compose build
-docker compose run --rm app php artisan migrate --force
 docker compose up -d
 ```
 
@@ -174,16 +160,10 @@ Open `http://localhost:8000/demo` in a browser.
 
 ### Database on the same machine
 
-Inside a container, `127.0.0.1` is the container itself — not your Mac or Linux host. If PostgreSQL or MySQL runs on the host (as your `\conninfo` session does), set:
+Inside a container, `127.0.0.1` is the container itself — not your Mac or Linux host. If PostgreSQL or MySQL runs on the host, set:
 
 ```env
 DB_HOST=host.docker.internal
-```
-
-Then retry:
-
-```bash
-docker compose run --rm app php artisan migrate --force
 ```
 
 Ensure PostgreSQL accepts TCP connections on port 5432 (not just a local socket). If migration still fails, check `listen_addresses` in `postgresql.conf` and host-based auth in `pg_hba.conf`.
@@ -216,17 +196,24 @@ cv.example.com {
 
 ### Updating
 
-Pull the latest image, run migrations, and restart:
+Pull the latest image and restart:
 
 ```bash
 docker compose pull
-docker compose run --rm app php artisan migrate --force
 docker compose up -d
+```
+
+Run migrations manually after schema changes:
+
+```bash
+docker compose run --rm app php artisan migrate --force
 ```
 
 To pin a release, set the `image` tag in `docker-compose.yml` (e.g. `0adnyana/laravel-cv-parser:v1.0.0`) instead of `:main`.
 
-See [DOCKER.md](DOCKER.md) for SQLite volumes, Redis, logs, and other deployment details.
+**Breaking change:** older setups bind-mounted `./.env` into the container. Copy those values into stack/container environment variables instead.
+
+See [DOCKER.md](DOCKER.md) for SQLite volumes, Redis, Neon, logs, and other deployment details.
 
 ---
 
@@ -290,7 +277,7 @@ composer test
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `APP_KEY` | Yes | Laravel encryption key |
+| `APP_KEY` | Docker: optional (auto-generated) / Local: yes | Laravel encryption key |
 | `APP_URL` | Yes | Public application URL |
 | `TRUSTED_PROXIES` | Production | `*` or comma-separated IPs when behind a reverse proxy |
 | `OPENROUTER_API_KEY` | For parsing | OpenRouter API key |

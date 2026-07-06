@@ -1,59 +1,57 @@
 # Self-Hosting with Docker
 
-Run the full application (Inertia web UI + `/api/v1/*` API) in a single container. No database is bundled — configure an external database via `.env`.
+Run the full application (Inertia web UI + `/api/v1/*` API) in a single container. No database is bundled — configure an external database via container environment variables.
 
 ## Requirements
 
-- Docker and Docker Compose
+- Docker and Docker Compose (or Portainer / another stack UI)
 - External database: PostgreSQL, MySQL/MariaDB, or SQLite
 - OpenRouter API key for CV parsing
 
-## Quick Start
+## Quick Start (Portainer or stack UI)
 
-1. Copy environment file and configure secrets:
+1. Create a stack from `docker-compose.yml` (paste the file or point at this repository).
 
-   ```bash
-   cp .env.example .env
-   ```
+2. Add these **environment variables** in the stack UI (no host `.env` file required):
 
-2. Set required values in `.env`:
+   | Variable | Required | Example |
+   | --- | --- | --- |
+   | `APP_URL` | Yes | `https://cv.example.com` |
+   | `APP_ENV` | Yes | `production` |
+   | `TRUSTED_PROXIES` | When behind a proxy | `*` |
+   | `OPENROUTER_API_KEY` | Yes | `sk-or-v1-...` |
+   | `OPENROUTER_MODEL` | Yes | `google/gemini-2.5-flash-lite-preview-09-2025` |
+   | `DB_URL` or `DB_*` | Yes | Neon connection string or individual vars |
+   | `APP_KEY` | No | Auto-generated on first start if omitted |
 
-   - `APP_KEY` — run `php artisan key:generate` locally, or `docker compose run --rm app php artisan key:generate`
-   - `APP_URL` — public URL users visit (see [Reverse proxy](#reverse-proxy) below)
-   - `TRUSTED_PROXIES=*` — when behind a reverse proxy
-   - `DB_*` — external database credentials
-   - `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`
+3. Deploy the stack. On first start the container will:
 
-3. Pull the image (or build locally on Apple Silicon if pull fails — see below):
+   - Generate and persist `APP_KEY` to the `app-storage` volume (when not provided)
+   - Run database migrations once (when database env vars are set)
 
-   ```bash
-   docker compose pull
-   ```
-
-   On **ARM64** hosts, if pull fails with `no matching manifest for linux/arm64`, build locally:
-
-   ```bash
-   docker compose build
-   ```
-
-4. Run migrations (explicit step — not automatic on start):
-
-   ```bash
-   docker compose run --rm app php artisan migrate --force
-   ```
-
-5. Start the application:
-
-   ```bash
-   docker compose up -d
-   ```
-
-6. Verify health:
+4. Verify health:
 
    ```bash
    curl http://localhost:8000/up
    curl http://localhost:8000/api/v1/status
    ```
+
+## Quick Start (Docker Compose CLI)
+
+For local CLI workflows, you may optionally keep a `.env` file beside `docker-compose.yml`. Compose loads it when present (`required: false`) — it is **not** bind-mounted into the container.
+
+```bash
+cp .env.example .env
+# Edit .env with your values, then:
+docker compose pull   # or docker compose build on ARM64 if pull fails
+docker compose up -d
+```
+
+Migrations run automatically on first container start. To re-run manually:
+
+```bash
+docker compose run --rm app php artisan migrate --force
+```
 
 ## Port Mapping
 
@@ -68,7 +66,7 @@ The container always listens on port **8000**.
 
 ## Database on the Same Machine
 
-Inside a container, `127.0.0.1` refers to the container — not the host where PostgreSQL or MySQL may be running. Set `DB_HOST=host.docker.internal` in `.env` when the database runs on the same machine as Docker.
+Inside a container, `127.0.0.1` refers to the container — not the host where PostgreSQL or MySQL may be running. Set `DB_HOST=host.docker.internal` when the database runs on the same machine as Docker.
 
 `docker-compose.yml` includes `extra_hosts: host.docker.internal:host-gateway` so this works on Linux as well as Docker Desktop.
 
@@ -76,15 +74,23 @@ Ensure your database server accepts TCP connections (PostgreSQL: `listen_address
 
 ## Database Options
 
-### PostgreSQL
+### PostgreSQL (including Neon)
 
 ```env
 DB_CONNECTION=pgsql
-DB_HOST=your-postgres-host
+DB_URL=postgresql://USER:PASSWORD@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require
+```
+
+Or individual variables:
+
+```env
+DB_CONNECTION=pgsql
+DB_HOST=ep-xxxx.region.aws.neon.tech
 DB_PORT=5432
-DB_DATABASE=laravel_cv_parser
-DB_USERNAME=your_user
-DB_PASSWORD=your_password
+DB_DATABASE=neondb
+DB_USERNAME=your_neon_user
+DB_PASSWORD=your_neon_password
+DB_SSLMODE=require
 ```
 
 ### MySQL / MariaDB
@@ -106,7 +112,7 @@ Bind-mount a host directory for the database file:
 services:
   app:
     volumes:
-      - app-logs:/app/storage/logs
+      - app-storage:/app/storage
       - ./data:/app/database
 ```
 
@@ -115,7 +121,7 @@ DB_CONNECTION=sqlite
 DB_DATABASE=/app/database/database.sqlite
 ```
 
-Create the database file before migrating:
+Create the database file before the first start:
 
 ```bash
 mkdir -p data && touch data/database.sqlite
@@ -164,14 +170,25 @@ QUEUE_CONNECTION=redis
 
 No Redis container is included in `docker-compose.yml`.
 
-## Logs
+## Storage and Logs
 
-Application logs are persisted in the `app-logs` Docker volume (`storage/logs` inside the container).
+Application storage (including logs, auto-generated `APP_KEY`, and migration marker) is persisted in the `app-storage` Docker volume (`/app/storage` inside the container).
+
+If you previously used the `app-logs` volume, recreate the stack so the new volume is used. Copy any needed log files from the old volume before removing it.
 
 ## Updating
 
 ```bash
 docker compose pull
-docker compose run --rm app php artisan migrate --force
 docker compose up -d
 ```
+
+Run migrations manually after schema changes:
+
+```bash
+docker compose run --rm app php artisan migrate --force
+```
+
+## Migrating from bind-mounted `.env`
+
+Older compose setups bind-mounted `./.env` into the container. That is no longer required. Copy your values into Portainer stack environment variables (or a local `.env` for CLI compose interpolation), remove any `./.env:/app/.env` volume override, and redeploy.
