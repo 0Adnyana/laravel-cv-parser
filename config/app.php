@@ -56,6 +56,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Trusted Proxies
+    |--------------------------------------------------------------------------
+    |
+    | When deploying behind a reverse proxy that terminates TLS, set this so
+    | Laravel trusts X-Forwarded-* headers and generates HTTPS asset URLs.
+    | Use "*" to trust all proxies, or comma-separated IPs/CIDRs to restrict.
+    |
+    */
+
+    'trusted_proxies' => env('TRUSTED_PROXIES'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

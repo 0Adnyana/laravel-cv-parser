@@ -1,14 +1,16 @@
 services:
   app:
     image: 0adnyana/laravel-cv-parser:main
-    build: .
     container_name: laravel-cv-parser
     restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
+    environment:
+      APP_URL: ${APP_URL}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-*}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      DB_CONNECTION: pgsql
+      DB_URL: ${DB_URL}
     ports:
-      # Remap the host port when running multiple apps on one host, e.g. "9080:8000"
       - '8000:8000'
     extra_hosts:
       - 'host.docker.internal:host-gateway'
