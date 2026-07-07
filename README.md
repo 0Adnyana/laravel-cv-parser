@@ -103,20 +103,52 @@ Error responses:
 
 The recommended production setup is a **single container** (FrankenPHP + Laravel Octane) pulled from [Docker Hub](https://hub.docker.com/r/0adnyana/laravel-cv-parser) as `0adnyana/laravel-cv-parser:main`. No database is bundled — point `DB_*` or `DB_URL` at PostgreSQL, MySQL, or SQLite.
 
-Configure the app with **container environment variables** (Portainer stack UI, compose `environment`, or an optional local `.env` for CLI). No host `.env` bind mount is required. `APP_KEY` is auto-generated on first start when omitted; migrations run automatically once when database env vars are set.
+Configure the app with **container environment variables** (Portainer stack UI, compose `environment`, or an optional local `.env` for CLI). No host `.env` bind mount is required.
+
+### Generate an APP_KEY first (required)
+
+The container refuses to start without `APP_KEY`. Generate one before your first deploy:
+
+```bash
+docker run --rm 0adnyana/laravel-cv-parser:main php artisan key:generate --show
+```
+
+Copy the `base64:...` output into your stack environment or `.env` file. Keep the same value for the life of the deployment — changing it invalidates sessions and encrypted data.
+
+### Mount storage as a volume
+
+Logs, file-based cache/sessions, and SQLite database files live under `/app/storage`. Mount a volume so they survive container restarts:
+
+```yaml
+volumes:
+  - app-storage:/app/storage
+```
+
+See [DOCKER.md](DOCKER.md) for SQLite-specific setup.
+
+### Migrations on startup
+
+By default the container runs `php artisan migrate` on startup so the app works out of the box. Container logs announce when migrations run or are skipped. To manage schema yourself, set `RUN_MIGRATIONS=false` and run migrations when ready:
+
+```bash
+docker compose exec app php artisan migrate --force
+```
 
 ### Requirements
 
 - Docker and Docker Compose (or Portainer)
 - External database
 - [OpenRouter](https://openrouter.ai/) API key and model name
+- A generated `APP_KEY` (see above)
 
 ### Quick start (Portainer)
 
-1. Create a stack from `docker-compose.yml`.
-2. Add environment variables:
+1. Generate an `APP_KEY` (see above).
+2. Create a stack from `docker-compose.yml`.
+3. Add environment variables:
 
 ```env
+APP_KEY=base64:REPLACE_WITH_YOUR_GENERATED_KEY
 APP_ENV=production
 APP_URL=https://cv.example.com
 TRUSTED_PROXIES=*
@@ -127,15 +159,19 @@ OPENROUTER_MODEL=google/gemini-2.5-flash-lite-preview-09-2025
 DB_URL=postgresql://USER:PASSWORD@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require
 ```
 
-3. Deploy. First start generates `APP_KEY` and runs migrations.
+4. Deploy. First start runs migrations (when a database is configured).
 
 ### Quick start (Docker Compose CLI)
 
 ```bash
 git clone https://github.com/0adnyana/laravel-cv-parser.git
 cd laravel-cv-parser
+
+# Generate APP_KEY and add it to .env:
+docker run --rm 0adnyana/laravel-cv-parser:main php artisan key:generate --show
+
 cp .env.example .env   # optional — loaded by compose when present, not mounted into the container
-# Edit .env, then:
+# Edit .env with APP_KEY and other values, then:
 docker compose pull
 docker compose up -d
 ```
@@ -203,15 +239,23 @@ docker compose pull
 docker compose up -d
 ```
 
-Run migrations manually after schema changes:
+Pending migrations apply automatically on startup unless `RUN_MIGRATIONS=false`. To run migrations manually:
 
 ```bash
-docker compose run --rm app php artisan migrate --force
+docker compose exec app php artisan migrate --force
 ```
 
 To pin a release, set the `image` tag in `docker-compose.yml` (e.g. `0adnyana/laravel-cv-parser:v1.0.0`) instead of `:main`.
 
-**Breaking change:** older setups bind-mounted `./.env` into the container. Copy those values into stack/container environment variables instead.
+**Breaking change:** older setups bind-mounted `./.env` into the container. Copy those values into stack/container environment variables instead. You must also supply `APP_KEY` explicitly — it is no longer auto-generated.
+
+### Memory limits (optional)
+
+FrankenPHP runs on Go. When the container has a memory limit, set `GOMEMLIMIT` to match (e.g. `GOMEMLIMIT=512MiB`) so the Go garbage collector behaves and OOM risk is reduced.
+
+### Health check
+
+The image health check probes `/up` with a 30-second start period. Boot runs migrations and config caching before Octane starts; if migrations grow large and containers are marked unhealthy during deploy, increase `--start-period` in the Dockerfile.
 
 See [DOCKER.md](DOCKER.md) for SQLite volumes, Redis, Neon, logs, and other deployment details.
 
@@ -277,7 +321,7 @@ composer test
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `APP_KEY` | Docker: optional (auto-generated) / Local: yes | Laravel encryption key |
+| `APP_KEY` | Yes (Docker & local) | Laravel encryption key — generate once with `docker run --rm <image> php artisan key:generate --show` |
 | `APP_URL` | Yes | Public application URL |
 | `TRUSTED_PROXIES` | Production | `*` or comma-separated IPs when behind a reverse proxy |
 | `OPENROUTER_API_KEY` | For parsing | OpenRouter API key |

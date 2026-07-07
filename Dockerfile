@@ -33,7 +33,7 @@ RUN mkdir -p bootstrap/cache \
     storage/framework/sessions \
     storage/framework/views \
     storage/logs \
-    && composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader \
+    && composer install --no-dev --no-interaction --prefer-dist --classmap-authoritative \
     && php artisan wayfinder:generate --no-interaction \
     && npm ci \
     && npm run build \
@@ -46,13 +46,15 @@ ENV APP_ENV=production \
     OCTANE_SERVER=frankenphp \
     LOG_CHANNEL=stderr
 
+COPY docker/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+
 COPY --from=builder /app /app
 
-RUN apt-get update \
+RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
+    && apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
-    && cp vendor/laravel/octane/src/Commands/stubs/frankenphp-worker.php public/frankenphp-worker.php \
     && chown -R www-data:www-data storage bootstrap/cache public \
     && chmod -R 775 storage bootstrap/cache \
     && chmod +x docker/entrypoint.sh

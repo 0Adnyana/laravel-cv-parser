@@ -31,6 +31,20 @@ The application container SHALL serve HTTP via Laravel Octane using the FrankenP
 - **WHEN** a client sends `GET /api/v1/status` to the container on port 8000
 - **THEN** the response status is 200 with valid JSON
 
+### Requirement: Production PHP configuration
+
+The runtime Docker image SHALL use production PHP settings and an explicit opcache configuration tuned for immutable container code.
+
+#### Scenario: Production php.ini active
+
+- **WHEN** the runtime container starts
+- **THEN** PHP loads `php.ini-production` (not `php.ini-development`) as the active `php.ini`
+
+#### Scenario: Opcache enabled with immutable code settings
+
+- **WHEN** the runtime container serves requests via FrankenPHP
+- **THEN** opcache is enabled with explicit settings including `opcache.validate_timestamps=0` because application code is fixed inside the image
+
 ### Requirement: Container environment configuration without host env file
 
 The `docker-compose.yml` SHALL configure the application using container environment variables only. The compose file MUST NOT bind-mount a host `.env` file into the container. An `env_file` reference MAY be present but MUST be optional (`required: false`) so stack deployers (e.g. Portainer) are not blocked when no host `.env` file exists.
@@ -45,24 +59,24 @@ The `docker-compose.yml` SHALL configure the application using container environ
 - **WHEN** a deployer places a `.env` file beside `docker-compose.yml` on a machine using Docker Compose CLI
 - **THEN** compose MAY load it via optional `env_file` without requiring a bind mount into the container
 
-### Requirement: Automatic APP_KEY bootstrap
+### Requirement: Required operator-supplied APP_KEY
 
-When the container starts and `APP_KEY` is empty or unset, the entrypoint SHALL generate a new application key before serving traffic. If a writable `storage/` volume is mounted, the generated key SHALL be persisted to a file under `storage/` so restarts reuse the same key.
+The container entrypoint SHALL require `APP_KEY` to be supplied by the operator via environment variable. The container MUST NOT auto-generate or persist an application key.
 
-#### Scenario: First start without APP_KEY
+#### Scenario: Container refuses to start without APP_KEY
 
-- **WHEN** the container starts with no `APP_KEY` environment variable and no persisted key file
-- **THEN** the entrypoint generates an `APP_KEY`, writes it to persistent storage when available, and Octane starts successfully
+- **WHEN** the container starts with no `APP_KEY` environment variable
+- **THEN** the entrypoint exits with a non-zero status and prints instructions to generate a key using `php artisan key:generate --show`
 
-#### Scenario: Restart reuses persisted key
-
-- **WHEN** the container restarts and a previously generated key exists in the persisted storage volume
-- **THEN** the same `APP_KEY` is used without regeneration
-
-#### Scenario: Operator-provided APP_KEY
+#### Scenario: Operator-provided APP_KEY accepted
 
 - **WHEN** the deployer sets `APP_KEY` in container environment variables
-- **THEN** the entrypoint does not generate or overwrite that value
+- **THEN** the entrypoint proceeds without generating or overwriting that value
+
+#### Scenario: APP_KEY generation documented
+
+- **WHEN** a deployer reads the self-host documentation
+- **THEN** they find the one-time key generation command as the first setup step before running the container
 
 ### Requirement: External database via environment
 
@@ -99,12 +113,17 @@ The `docker-compose.yml` SHALL publish the application container port 8000 to a 
 
 ### Requirement: Storage volume persistence
 
-The compose configuration SHALL mount a volume for `/app/storage` so logs, bootstrap state (including auto-generated `APP_KEY`), and migration markers survive container restarts.
+The compose configuration SHALL mount a volume for `/app/storage` so logs, SQLite database files (when used), and file-based cache/session data survive container restarts.
 
 #### Scenario: Storage persists after restart
 
-- **WHEN** the application writes log entries or bootstrap files and the container is restarted
+- **WHEN** the application writes log entries or database files to storage and the container is restarted
 - **THEN** previous storage contents remain available in the mounted volume
+
+#### Scenario: Storage volume documented for SQLite
+
+- **WHEN** a deployer reads the self-host documentation
+- **THEN** they find guidance to mount `/app/storage` as a volume, especially when using SQLite
 
 ### Requirement: Container health check
 
@@ -115,19 +134,43 @@ The application container SHALL define a Docker HEALTHCHECK that probes the `/up
 - **WHEN** Octane is running and the application is ready
 - **THEN** the Docker health check reports healthy
 
+### Requirement: Boot-time migrations with opt-out
+
+The entrypoint SHALL run pending database migrations on every container start by default, using Laravel's idempotent migration tracking. Operators MAY disable this behavior via `RUN_MIGRATIONS=false`.
+
+#### Scenario: Default boot-time migrations
+
+- **WHEN** the container starts with valid database environment variables, pending migrations, and `RUN_MIGRATIONS` unset or set to `true`
+- **THEN** the entrypoint runs `php artisan migrate --force --isolated` before Octane starts and logs that migrations are running
+
+#### Scenario: Migration opt-out
+
+- **WHEN** the container starts with `RUN_MIGRATIONS=false`
+- **THEN** the entrypoint skips migrations and logs that migrations were skipped by operator choice
+
+#### Scenario: No database configured
+
+- **WHEN** the container starts without sufficient database configuration
+- **THEN** the entrypoint skips migrations and logs that no database is configured
+
+#### Scenario: Migration opt-out documented
+
+- **WHEN** a deployer reads the self-host documentation
+- **THEN** they find instructions to set `RUN_MIGRATIONS=false` and run migrations manually when ready
+
 ### Requirement: Explicit database migrations
 
-Database migrations SHALL run automatically on first container start when a database is configured and migrations have not yet been applied. The project SHALL also document a manual migration command for redeploys and troubleshooting.
+Database migrations SHALL run automatically on container start when a database is configured (unless disabled via `RUN_MIGRATIONS=false`). The project SHALL document manual migration commands for operators who manage schema themselves.
 
-#### Scenario: Automatic first-run migrations
+#### Scenario: Automatic boot migrations apply pending only
 
-- **WHEN** the container starts for the first time with valid database environment variables and pending migrations
-- **THEN** the entrypoint runs `php artisan migrate --force` once before Octane starts
+- **WHEN** the container starts with valid database environment variables and some migrations already applied in the database
+- **THEN** the entrypoint runs only pending migrations via `php artisan migrate --force --isolated`
 
 #### Scenario: Documented manual migration command
 
-- **WHEN** a deployer follows the self-host documentation for redeploys or troubleshooting
-- **THEN** they can run `docker compose run --rm app php artisan migrate --force` to apply migrations manually
+- **WHEN** a deployer follows the self-host documentation for manual schema management
+- **THEN** they can run `docker compose exec app php artisan migrate --force` (or equivalent) to apply migrations manually
 
 ### Requirement: Reverse-proxy deployment support
 

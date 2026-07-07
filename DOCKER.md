@@ -22,12 +22,12 @@ Run the full application (Inertia web UI + `/api/v1/*` API) in a single containe
    | `OPENROUTER_API_KEY` | Yes | `sk-or-v1-...` |
    | `OPENROUTER_MODEL` | Yes | `google/gemini-2.5-flash-lite-preview-09-2025` |
    | `DB_URL` or `DB_*` | Yes | Neon connection string or individual vars |
-   | `APP_KEY` | No | Auto-generated on first start if omitted |
+   | `APP_KEY` | Yes | Generate with `docker run --rm <image> php artisan key:generate --show` |
 
 3. Deploy the stack. On first start the container will:
 
-   - Generate and persist `APP_KEY` to the `app-storage` volume (when not provided)
-   - Run database migrations once (when database env vars are set)
+   - Require `APP_KEY` in environment (fails fast with instructions if missing)
+   - Run pending database migrations on startup (unless `RUN_MIGRATIONS=false`)
 
 4. Verify health:
 
@@ -38,19 +38,20 @@ Run the full application (Inertia web UI + `/api/v1/*` API) in a single containe
 
 ## Quick Start (Docker Compose CLI)
 
-For local CLI workflows, you may optionally keep a `.env` file beside `docker-compose.yml`. Compose loads it when present (`required: false`) — it is **not** bind-mounted into the container.
+For local CLI workflows, generate an `APP_KEY` first, then optionally keep a `.env` file beside `docker-compose.yml`. Compose loads it when present (`required: false`) — it is **not** bind-mounted into the container.
 
 ```bash
+docker run --rm 0adnyana/laravel-cv-parser:main php artisan key:generate --show
 cp .env.example .env
-# Edit .env with your values, then:
+# Add APP_KEY and other values to .env, then:
 docker compose pull   # or docker compose build on ARM64 if pull fails
 docker compose up -d
 ```
 
-Migrations run automatically on first container start. To re-run manually:
+Migrations run automatically on each startup (pending only). Set `RUN_MIGRATIONS=false` to manage schema yourself. To run manually:
 
 ```bash
-docker compose run --rm app php artisan migrate --force
+docker compose exec app php artisan migrate --force
 ```
 
 ## Port Mapping
@@ -172,9 +173,13 @@ No Redis container is included in `docker-compose.yml`.
 
 ## Storage and Logs
 
-Application storage (including logs, auto-generated `APP_KEY`, and migration marker) is persisted in the `app-storage` Docker volume (`/app/storage` inside the container).
+Application storage (logs, SQLite database files when used, file-based cache/sessions) is persisted in the `app-storage` Docker volume (`/app/storage` inside the container). Mount this volume so data survives container restarts.
 
 If you previously used the `app-logs` volume, recreate the stack so the new volume is used. Copy any needed log files from the old volume before removing it.
+
+## Memory Limits (Optional)
+
+When running with a container memory limit, set `GOMEMLIMIT` to match available memory (e.g. `GOMEMLIMIT=512MiB`) so FrankenPHP's Go runtime garbage collector behaves correctly.
 
 ## Updating
 
@@ -183,7 +188,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Run migrations manually after schema changes:
+Run migrations manually after schema changes (or when `RUN_MIGRATIONS=false`):
 
 ```bash
 docker compose run --rm app php artisan migrate --force

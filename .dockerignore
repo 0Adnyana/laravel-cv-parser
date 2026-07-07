@@ -13,7 +13,8 @@ storage/framework/cache
 storage/framework/sessions
 storage/framework/views
 storage/pail
-bootstrap/cache
+storage/*.key
+bootstrap/cache/*
 .phpunit.cache
 .phpunit.result.cache
 tests

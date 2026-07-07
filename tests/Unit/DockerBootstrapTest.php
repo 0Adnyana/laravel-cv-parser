@@ -13,7 +13,7 @@ function runBootstrap(string $function, array $environment = []): array
 
     $command = trim($exports.' sh -c '.escapeshellarg('. '.escapeshellarg(bootstrapScript()).'; '.$function));
 
-    exec($command, $output, $exitCode);
+    exec($command.' 2>&1', $output, $exitCode);
 
     return [
         'output' => implode("\n", $output),
@@ -22,74 +22,47 @@ function runBootstrap(string $function, array $environment = []): array
 }
 
 test('bootstrap respects existing APP_KEY environment variable', function () {
-    $keyFile = sys_get_temp_dir().'/bootstrap-app-key-'.uniqid();
-    file_put_contents($keyFile, 'base64:from-file');
-
     $result = runBootstrap('bootstrap_app_key; printf "%s" "$APP_KEY"', [
         'APP_KEY' => 'base64:from-env',
-        'APP_KEY_FILE' => $keyFile,
     ]);
 
     expect($result['exitCode'])->toBe(0)
         ->and($result['output'])->toBe('base64:from-env');
 });
 
-test('bootstrap loads APP_KEY from persisted file', function () {
-    $directory = sys_get_temp_dir().'/bootstrap-'.uniqid();
-    mkdir($directory);
-    $keyFile = $directory.'/.app_key';
-    file_put_contents($keyFile, 'base64:persisted-key');
+test('bootstrap exits when APP_KEY is missing', function () {
+    $result = runBootstrap('bootstrap_app_key');
 
-    $result = runBootstrap('bootstrap_app_key; printf "%s" "$APP_KEY"', [
-        'APP_KEY_FILE' => $keyFile,
-    ]);
-
-    expect($result['exitCode'])->toBe(0)
-        ->and($result['output'])->toBe('base64:persisted-key');
+    expect($result['exitCode'])->toBe(1)
+        ->and($result['output'])->toContain('FATAL: APP_KEY is not set.')
+        ->and($result['output'])->toContain('php artisan key:generate --show');
 });
 
-test('bootstrap generates and persists APP_KEY when unset', function () {
-    $directory = sys_get_temp_dir().'/bootstrap-'.uniqid();
-    mkdir($directory);
-    $keyFile = $directory.'/.app_key';
-
-    $result = runBootstrap('bootstrap_app_key', [
-        'APP_KEY_FILE' => $keyFile,
-    ]);
-
-    expect($result['exitCode'])->toBe(0)
-        ->and(file_exists($keyFile))->toBeTrue()
-        ->and(file_get_contents($keyFile))->toStartWith('base64:')
-        ->and($result['output'])->toContain('Auto-generated APP_KEY and persisted to '.$keyFile);
-});
-
-test('bootstrap skips migrations when marker file exists', function () {
-    $directory = sys_get_temp_dir().'/bootstrap-'.uniqid();
-    mkdir($directory);
-    $marker = $directory.'/.migrations_applied';
-    touch($marker);
-
+test('bootstrap skips migrations when RUN_MIGRATIONS is false', function () {
     $result = runBootstrap('bootstrap_migrations', [
-        'MIGRATIONS_MARKER' => $marker,
+        'RUN_MIGRATIONS' => 'false',
         'DB_CONNECTION' => 'pgsql',
         'DB_HOST' => 'localhost',
     ]);
 
-    expect($result['exitCode'])->toBe(0);
+    expect($result['exitCode'])->toBe(0)
+        ->and($result['output'])->toContain("RUN_MIGRATIONS is not 'true', skipping migrations.");
 });
 
 test('bootstrap skips migrations without database configuration', function () {
-    $directory = sys_get_temp_dir().'/bootstrap-'.uniqid();
-    mkdir($directory);
-    $marker = $directory.'/.migrations_applied';
-
     $result = runBootstrap(
-        'unset DB_URL DB_HOST DB_CONNECTION DB_DATABASE; bootstrap_migrations; test ! -f '.escapeshellarg($marker),
-        [
-            'MIGRATIONS_MARKER' => $marker,
-        ],
+        'unset DB_URL DB_HOST DB_CONNECTION DB_DATABASE; bootstrap_migrations',
     );
 
     expect($result['exitCode'])->toBe(0)
-        ->and(file_exists($marker))->toBeFalse();
+        ->and($result['output'])->toContain('No database configured, skipping migrations.');
+});
+
+test('bootstrap announces migrations when database is configured', function () {
+    $result = runBootstrap('bootstrap_migrations', [
+        'DB_CONNECTION' => 'sqlite',
+        'DB_DATABASE' => '/tmp/nonexistent-'.uniqid().'.sqlite',
+    ]);
+
+    expect($result['output'])->toContain('Running database migrations...');
 });

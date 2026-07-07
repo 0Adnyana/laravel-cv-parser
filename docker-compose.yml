@@ -4,12 +4,15 @@ services:
     container_name: laravel-cv-parser
     restart: unless-stopped
     environment:
+      APP_KEY: ${APP_KEY} # required — generate with: docker run --rm <image> php artisan key:generate --show
       APP_URL: ${APP_URL}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-*}
+      OCTANE_HTTPS: ${OCTANE_HTTPS:-true}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL}
       DB_CONNECTION: pgsql
       DB_URL: ${DB_URL}
+      # RUN_MIGRATIONS: "false" # uncomment to manage schema yourself
     ports:
       - '8000:8000'
     extra_hosts:
